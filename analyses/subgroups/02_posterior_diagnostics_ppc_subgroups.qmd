@@ -483,7 +483,69 @@ ppc_stat(var_rate_treatment_obs_sub1, var_rate_treatment_rep_sub1, stat = "ident
   xlab("Variance of Event Rates in Treatment Group")
 ```
 
-## 6. Predicted Study-Specific Control/Treatment Probabiltities
+## 6. Correlation between Control and Treatment Event Proportions
+
+```{r}
+# Subgroup 0: Low_Dose == 0
+sub0_idx <- which(subgroup == 0)
+
+# Observed correlation for subgroup 0
+p_control_obs_sub0 <- y_obs[sub0_idx, 1] / dat$n1[sub0_idx]
+p_treatment_obs_sub0 <- y_obs[sub0_idx, 2] / dat$n2[sub0_idx]
+corr_obs_sub0 <- cor(p_control_obs_sub0, p_treatment_obs_sub0)
+
+# Replicated correlations for subgroup 0
+corr_rep_sub0 <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  p_control_rep <- y_mat[sub0_idx, 1] / dat$n1[sub0_idx]
+  p_treatment_rep <- y_mat[sub0_idx, 2] / dat$n2[sub0_idx]
+  cor(p_control_rep, p_treatment_rep)
+})
+
+# Convert to matrix for ppc_stat
+corr_rep_sub0 <- as.matrix(corr_rep_sub0) |> na.omit()
+
+# Compute posterior p-value for subgroup 0
+p_value_corr_sub0 <- mean(corr_rep_sub0 >= corr_obs_sub0)
+
+# Generate PPC plot for subgroup 0
+ppc_stat(corr_obs_sub0, corr_rep_sub0, stat = "identity") +
+  ggtitle("PPC: Correlation (Control vs. Treatment, Subgroup 0)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_corr_sub0, 3))) +
+  xlab("Correlation")
+```
+
+```{r}
+# Subgroup 1: Low_Dose == 1
+sub1_idx <- which(subgroup == 1)
+
+# Observed correlation for subgroup 1
+p_control_obs_sub1 <- y_obs[sub1_idx, 1] / dat$n1[sub1_idx]
+p_treatment_obs_sub1 <- y_obs[sub1_idx, 2] / dat$n2[sub1_idx]
+corr_obs_sub1 <- cor(p_control_obs_sub1, p_treatment_obs_sub1)
+
+# Replicated correlations for subgroup 1
+corr_rep_sub1 <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  p_control_rep <- y_mat[sub1_idx, 1] / dat$n1[sub1_idx]
+  p_treatment_rep <- y_mat[sub1_idx, 2] / dat$n2[sub1_idx]
+  cor(p_control_rep, p_treatment_rep)
+})
+
+# Convert to matrix for ppc_stat
+corr_rep_sub1 <- as.matrix(corr_rep_sub1) |> na.omit()
+
+# Compute posterior p-value for subgroup 1
+p_value_corr_sub1 <- mean(corr_rep_sub1 >= corr_obs_sub1)
+
+# Generate PPC plot for subgroup 1
+ppc_stat(corr_obs_sub1, corr_rep_sub1, stat = "identity") +
+  ggtitle("PPC: Correlation (Control vs. Treatment, Subgroup 1)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_corr_sub1, 3))) +
+  xlab("Correlation")
+```
+
+## 7. Predicted Study-Specific Control/Treatment Probabiltities
 
 ```{r}
 # Compute study-specific probabilities

@@ -327,7 +327,39 @@ ppc_stat(var_rate_treatment_obs, var_rate_treatment_rep, stat = "identity") +
   xlab("Variance of Event Rates in Treatment Group")
 ```
 
-## 6. Predicted Study-Specific Control/Treatment Probabiltities
+## 6. Correlation between Control and Treatment Event Proportions
+
+```{r}
+# Compute observed correlation
+p_control_obs <- y_obs[,1] / dat$n1
+p_treatment_obs <- y_obs[,2] / dat$n2
+corr_obs <- cor(p_control_obs, p_treatment_obs)
+
+# Compute correlation for replicated data
+corr_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  p_control_rep <- y_mat[,1] / dat$n1
+  p_treatment_rep <- y_mat[,2] / dat$n2
+  cor(p_control_rep, p_treatment_rep)
+})
+
+# Convert to matrix for ppc_stat
+corr_rep <- as.matrix(corr_rep)
+
+# Compute posterior p-value
+p_value_corr <- mean(corr_rep >= corr_obs)
+```
+
+
+```{r}
+# Generate PPC plot
+ppc_stat(corr_obs, corr_rep, stat = "identity") +
+  ggtitle("PPC: Correlation between Control and Treatment Event Proportions") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_corr, 3))) +
+  xlab("Correlation")
+```
+
+## 7. Predicted Study-Specific Control/Treatment Probabiltities
 
 ```{r}
 draws1 <- fit1$draws(format = "df")
@@ -397,7 +429,5 @@ ggplot(treatment_long, aes(x = Probability, y = Study)) +
   theme_minimal() +
   theme(strip.text = element_text(size = 12, face = "bold"))
 ```
-
-
 
 
