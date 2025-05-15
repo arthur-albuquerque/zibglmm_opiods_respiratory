@@ -5,7 +5,7 @@
 This repository implements a Zero-Inflated Bivariate Generalized Linear Mixed Model (ZIBGLMM) for meta-analysis of opioid-related respiratory outcomes, as described in:
 
 > "ZIBGLMM: Zero-Inflated Bivariate Generalized Linear Mixed Model for Meta-Analysis with Double-Zero-Event Studies"  
-> [medRxiv: 10.1101/2024.07.25.24310959v1](https://www.medrxiv.org/content/10.1101/2024.07.25.24310959v1)
+> [DOI: 10.1017/rsm.2024.4](https://www.cambridge.org/core/journals/research-synthesis-methods/article/zibglmm-zeroinflated-bivariate-generalized-linear-mixed-model-for-metaanalysis-with-doublezeroevent-studies/FCDCE1CC52319606DE9294F776411A3E)
 
 The model is adapted to include meta-regression for subgroup analysis, applied to a dataset of 84 studies on respiratory outcomes associated with opioid use. The repository contains data, Stan models, and Quarto files with R code for prior predictive checks, model diagnostics, posterior analysis, and visualization, handling double-zero-event studies (where both treatment and control groups report zero events).
 
