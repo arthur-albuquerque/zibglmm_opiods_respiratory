@@ -1,0 +1,507 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{r}
+pacman::p_load(MetaStan, cmdstanr, dplyr, tidyr, rio, here, data.table,
+               posterior, ggdist, ggplot2, bayesplot)
+
+# Set Stan options
+options(mc.cores = parallel::detectCores())
+```
+
+# Data
+
+
+```{r}
+dat = import(here("data/raw_data.xlsx"))
+
+setnames(dat, old=c("Int_Events","Control_Events"), new=c("r2", "r1"))
+setnames(dat, old=c("Int_Total","Control_Total"), new=c("n2", "n1"))
+
+J <- nrow(dat)  # Number of studies (84)
+y <- as.matrix(dat[, c("r1", "r2")])  # Events: control (r1), treatment (r2)
+sample <- as.matrix(dat[, c("n1", "n2")])  # Sample sizes: control (n1), treatment (n2)
+zero <- c(0, 0)  # Zero vector for random effects mean
+subgroup = dat[, "Low_Dose"]
+
+# Create the Stan data list
+stan_data <- list(
+  J = J,
+  zero = zero,
+  y = y,
+  sample = sample,
+  subgroup = subgroup
+)
+
+stan_data_prior <- list(
+  J = J,
+  zero = zero,
+  sample = sample,
+  subgroup = subgroup
+)
+
+```
+
+# Models
+
+```{r}
+zibglmm1_prior <- cmdstan_model(here("models/stan/zibglmm_subgroups_prior_model1.stan"))
+zibglmm2_prior <- cmdstan_model(here("models/stan/zibglmm_subgroups_prior_model2.stan"))
+
+zibglmm1 <- cmdstan_model(here("models/stan/zibglmm_subgroups_model1.stan"))
+zibglmm2 <- cmdstan_model(here("models/stan/zibglmm_subgroups_model2.stan"))
+```
+
+## Full
+
+### Model 1
+
+```{r}
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_subgroups_model1.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit from CSV files
+  fit1 <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # Fit the model if no CSV files are found
+  fit1 <- zibglmm1$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    adapt_delta = 0.99,  
+    max_treedepth = 15,  
+    seed = 123,
+    refresh = 0
+)
+  
+  # Save CSV files to persistent directory
+  fit1$save_output_files(dir = "models/storage")
+}
+
+```
+
+### Model 2
+
+```{r}
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_subgroups_model2.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit from CSV files
+  fit2 <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # Fit the model if no CSV files are found
+  fit2 <- zibglmm2$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    adapt_delta = 0.99,  
+    max_treedepth = 15,  
+    seed = 123,
+    refresh = 0
+)
+  
+  # Save CSV files to persistent directory
+  fit2$save_output_files(dir = "models/storage")
+}
+
+```
+
+## Prior only
+
+```{r}
+
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_subgroups_prior_model1.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit from CSV files
+  fit_prior_mod1 <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # Fit the model if no CSV files are found
+  fit_prior_mod1 <- zibglmm1_prior$sample(
+    data = stan_data_prior,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,  
+    adapt_delta = 0.99,
+    seed = 123,
+    refresh = 0
+  )
+  
+  # Save CSV files to persistent directory
+  fit_prior_mod1$save_output_files(dir = "models/storage")
+}
+
+
+```
+
+```{r}
+
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_subgroups_prior_model2.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit from CSV files
+  fit_prior_mod2 <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # Fit the model if no CSV files are found
+  fit_prior_mod2 <- zibglmm2_prior$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,  
+    adapt_delta = 0.99,
+    seed = 123,
+    refresh = 0
+  )
+  
+  # Save CSV files to persistent directory
+  fit_prior_mod2$save_output_files(dir = "models/storage")
+}
+
+
+```
+
+# Samples
+
+## Priors
+
+```{r}
+parameters_draws1_prior = 
+  fit_prior_mod1$draws(variables = c("pi", "mu", "sigma_nu", "beta"),
+            format = "df")
+
+parameters_draws2_prior = 
+  fit_prior_mod2$draws(variables = c("pi", "mu", "sigma_nu", "beta"),
+            format = "df")
+
+estimands_draws1_prior = 
+  fit_prior_mod1$draws(variables = c("p_control_sub0",
+                                     "p_control_sub1",  
+                                     "p_treatment_sub0",
+                                     "p_treatment_sub1",
+                                     "RR_sub0",
+                                     "RR_sub1",         
+                                     "OR_sub0",         
+                                     "OR_sub1",         
+                                     "RD_sub0",         
+                                     "RD_sub1"),
+            format = "df")
+
+estimands_draws2_prior = 
+  fit_prior_mod2$draws(variables = c("p_control_sub0",
+                                     "p_control_sub1",  
+                                     "p_treatment_sub0",
+                                     "p_treatment_sub1",
+                                     "RR_sub0",
+                                     "RR_sub1",         
+                                     "OR_sub0",         
+                                     "OR_sub1",         
+                                     "RD_sub0",         
+                                     "RD_sub1"),
+            format = "df")
+```
+
+
+
+## Posterior
+
+```{r}
+parameters_draws1 = 
+  fit1$draws(variables = c("pi", "mu", "sigma_nu", "beta"),
+            format = "df")
+
+parameters_draws2 = 
+  fit2$draws(variables = c("pi", "mu", "sigma_nu", "beta"),
+            format = "df")
+
+estimands_draws1 <- fit1$draws(variables = c("p_control_sub0",
+                                             "p_control_sub1",  
+                                             "p_treatment_sub0",
+                                             "p_treatment_sub1",
+                                             "RR_sub0",
+                                             "RR_sub1",         
+                                             "OR_sub0",         
+                                             "OR_sub1",         
+                                             "RD_sub0",         
+                                             "RD_sub1"),
+                             format = "df")
+
+estimands_draws2 <- fit2$draws(variables = c("p_control_sub0",
+                                             "p_control_sub1",  
+                                             "p_treatment_sub0",
+                                             "p_treatment_sub1",
+                                             "RR_sub0",
+                                             "RR_sub1",         
+                                             "OR_sub0",         
+                                             "OR_sub1",         
+                                             "RD_sub0",         
+                                             "RD_sub1"),
+                             format = "df")
+```
+
+
+# Parameters
+
+## Mu Control
+
+```{r}
+
+tibble(`Posterior: Mod1` = parameters_draws1$`mu[1]`,
+       `Prior: Mod1` = parameters_draws1_prior$`mu[1]`,
+       `Posterior: Mod2` = parameters_draws2$`mu[1]`,
+       `Prior: Mod2` = parameters_draws2_prior$`mu[1]`
+       ) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = plogis(value), fill = name) +
+  stat_slab(alpha = 0.3) +
+  coord_cartesian(x = c(0, 0.15)) + 
+  theme_ggdist()
+```
+
+
+## Mu Treatment
+
+```{r}
+
+tibble(`Posterior: Mod1` = parameters_draws1$`mu[2]`,
+       `Prior: Mod1` = parameters_draws1_prior$`mu[2]`,
+       `Posterior: Mod2` = parameters_draws2$`mu[2]`,
+       `Prior: Mod2` = parameters_draws2_prior$`mu[2]`
+       ) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = plogis(value), fill = name) +
+  stat_slab(alpha = 0.3) +
+  coord_cartesian(x = c(0, 0.15)) + 
+  theme_ggdist()
+```
+## Beta Control
+
+```{r}
+data.frame(Posterior = parameters_draws1$`beta[1]`,
+           # Normal(0, 0.5^2)
+           Prior = parameters_draws1_prior$`beta[1]`) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = plogis(value), fill = name) +
+  stat_slab(alpha = 0.5) +
+  theme_ggdist() +
+  labs(title = "Model 1: beta prior Normal(0, 0.5^2)")
+```
+
+```{r}
+data.frame(Posterior = parameters_draws2$`beta[1]`,
+           # Normal(0, 3^2)
+           Prior = parameters_draws2_prior$`beta[1]`) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = plogis(value), fill = name) +
+  stat_slab(alpha = 0.5) +
+  #geom_histogram(binwidth = 0.005, fill = "gray70", color = "black") +
+  #coord_cartesian(x = c(0, 0.15)) + 
+  theme_ggdist() +
+  labs(title = "Model 2: beta prior Normal(0, 3^2)")
+```
+
+```{r}
+data.frame(`Model 1` = parameters_draws1$`beta[1]`,
+           `Model 2` = parameters_draws2$`beta[1]`) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = plogis(value), fill = name) +
+  stat_slab(alpha = 0.5) +
+  theme_ggdist() +
+  labs(title = "Posteriors: Model 1 vs. Model 2")
+```
+
+
+## Pi
+
+```{r}
+tibble(`Posterior: Mod1` = parameters_draws1$pi,
+       `Prior: Mod1` = parameters_draws1_prior$pi,
+       `Posterior: Mod2` = parameters_draws2$pi,
+       `Prior: Mod2` = parameters_draws2_prior$pi) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.3) +
+  coord_cartesian(x = c(0, 1)) + 
+  theme_ggdist()
+```
+
+## Sigma_nu control (random-effect) 
+
+```{r}
+tibble(`Posterior: Mod1` = parameters_draws1$`sigma_nu[1]`,
+       `Prior: Mod1` = parameters_draws1_prior$`sigma_nu[1]`,
+       `Posterior: Mod2` = parameters_draws2$`sigma_nu[1]`,
+       `Prior: Mod2` = parameters_draws2_prior$`sigma_nu[1]`) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.3) +
+  #coord_cartesian(x = c(0, 1)) + 
+  theme_ggdist()
+```
+
+## Sigma_nu treatment (random-effect) 
+
+```{r}
+tibble(`Posterior: Mod1` = parameters_draws1$`sigma_nu[2]`,
+       `Prior: Mod1` = parameters_draws1_prior$`sigma_nu[2]`,
+       `Posterior: Mod2` = parameters_draws2$`sigma_nu[2]`,
+       `Prior: Mod2` = parameters_draws2_prior$`sigma_nu[2]`) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.3) +
+  #coord_cartesian(x = c(0, 1)) + 
+  theme_ggdist()
+```
+
+
+## Estimands
+
+```{r}
+tibble(`Control: Mod1` = estimands_draws1$p_control_sub0,
+       `Control: Mod2` = estimands_draws2$p_control_sub0,
+       `Treatment: Mod1` = estimands_draws1$p_treatment_sub0,
+       `Treatment: Mod2` = estimands_draws2$p_treatment_sub0
+       ) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.3) +
+  coord_cartesian(x = c(0, 0.2)) + 
+  theme_ggdist() +
+  labs(title = "Posteriors: Control Risk",
+       subtitle = "Subgroup High-Dose")
+```
+
+```{r}
+tibble(`Control: Mod1` = estimands_draws1$p_control_sub1,
+       `Control: Mod2` = estimands_draws2$p_control_sub1,
+       `Treatment: Mod1` = estimands_draws1$p_treatment_sub1,
+       `Treatment: Mod2` = estimands_draws2$p_treatment_sub1
+       ) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.3) +
+  coord_cartesian(x = c(0, 0.2)) + 
+  theme_ggdist() +
+  labs(title = "Posteriors: Treatment Risk",
+       subtitle = "Subgroup Low-Dose")
+```
+
+```{r}
+tibble(`Posterior: Mod1` = estimands_draws1$RR_sub0,
+       `Posterior: Mod2` = estimands_draws2$RR_sub0) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.5) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  scale_x_continuous(breaks = seq(0, 6, 1)) +
+  coord_cartesian(x = c(0, 6)) + 
+  theme_ggdist() +
+  labs(title = "Risk Ratio",
+       subtitle = "Subgroup: High-Dose")
+```
+
+```{r}
+tibble(`Posterior: Mod1` = estimands_draws1$RR_sub1,
+       `Posterior: Mod2` = estimands_draws2$RR_sub1) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.5) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  scale_x_continuous(breaks = seq(0, 6, 1)) +
+  coord_cartesian(x = c(0, 6)) + 
+  theme_ggdist() +
+  labs(title = "Risk Ratio",
+       subtitle = "Subgroup: Low-Dose")
+```
+
+```{r}
+tibble(`Posterior: Mod1` = estimands_draws1$OR_sub0,
+       `Posterior: Mod2` = estimands_draws2$OR_sub0) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.5) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  coord_cartesian(x = c(0, 6)) + 
+  scale_x_continuous(breaks = seq(0, 6, 1)) +
+  theme_ggdist() +
+  labs(title = "Odds Ratio",
+       subtitle = "Subgroup: High-Dose")
+```
+
+```{r}
+tibble(`Posterior: Mod1` = estimands_draws1$OR_sub1,
+       `Posterior: Mod2` = estimands_draws2$OR_sub1) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.5) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  coord_cartesian(x = c(0, 6)) + 
+  scale_x_continuous(breaks = seq(0, 6, 1)) +
+  theme_ggdist() +
+  labs(title = "Odds Ratio",
+       subtitle = "Subgroup: High-Dose")
+```
+
+```{r}
+tibble(`Posterior: Mod1` = estimands_draws1$RD_sub0,
+       `Posterior: Mod2` = estimands_draws2$RD_sub0) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  coord_cartesian(x = c(-0.05, 0.15)) + 
+  theme_ggdist() +
+  labs(title = "Risk Difference",
+       subtitle = "Subgroup: Low-Dose")
+```
+
+```{r}
+tibble(`Posterior: Mod1` = estimands_draws1$RD_sub1,
+       `Posterior: Mod2` = estimands_draws2$RD_sub1) |> 
+  pivot_longer(everything()) |> 
+  ggplot() +
+  aes(x = value, fill = name) +
+  stat_slab(alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  coord_cartesian(x = c(-0.05, 0.15)) + 
+  theme_ggdist() +
+  labs(title = "Risk Difference",
+       subtitle = "Subgroup: High-Dose")
+```
+
+

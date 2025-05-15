@@ -1,0 +1,364 @@
+---
+title: "Untitled"
+format: html
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+pacman::p_load(MetaStan, cmdstanr, dplyr, tidyr, rio, here, data.table,
+               posterior, ggdist, ggplot2, bayesplot, MetBrewer)
+
+# Set Stan options
+options(mc.cores = parallel::detectCores())
+```
+
+# Data
+
+
+```{r}
+dat = import(here("data/raw_data.xlsx"))
+
+setnames(dat, old=c("Int_Events","Control_Events"), new=c("r2", "r1"))
+setnames(dat, old=c("Int_Total","Control_Total"), new=c("n2", "n1"))
+
+J <- nrow(dat)  # Number of studies (84)
+y <- as.matrix(dat[, c("r1", "r2")])  # Events: control (r1), treatment (r2)
+sample <- as.matrix(dat[, c("n1", "n2")])  # Sample sizes: control (n1), treatment (n2)
+zero <- c(0, 0)  # Zero vector for random effects mean
+subgroup <- dat[, "Low_Dose"]
+
+# Create the Stan data list
+stan_data <- list(
+  J = J,
+  zero = zero,
+  y = y,
+  sample = sample
+)
+
+stan_data_subgroup <- list(
+  J = J,
+  zero = zero,
+  y = y,
+  sample = sample,
+  subgroup = subgroup
+)
+```
+
+# Models
+
+```{r}
+zibglmm1 <- cmdstan_model(here("models/stan/zibglmm_model1.stan"))
+
+
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_model1.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit from CSV files
+  fit1 <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # Fit the model if no CSV files are found
+  fit1 <- zibglmm1$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    adapt_delta = 0.99,  
+    max_treedepth = 15,  
+    seed = 123,
+    refresh = 0
+)
+  
+  # Save CSV files to persistent directory
+  fit1$save_output_files(dir = "models/storage")
+}
+
+```
+
+```{r}
+mod_subgroup <- cmdstan_model(here("models/stan/zibglmm_subgroups_model1.stan"))
+
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_subgroups_model1.*\\.csv$",
+                        full.names = TRUE)
+
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit1 from CSV files
+  fit_sub <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # fit1 the model if no CSV files are found
+  fit_sub <- mod_subgroup$sample(
+    data = stan_data_subgroup,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    adapt_delta = 0.99,  
+    max_treedepth = 15,  
+    init = init_fun,
+    seed = 123,
+    refresh = 0
+)
+  
+  # Save CSV files to persistent directory
+  fit_sub$save_output_files(dir = "models/storage")
+}
+
+```
+
+# Results
+
+```{r}
+draws <- fit1$draws(variables = c("p_control","p_treatment","RR", "OR", "RD"),
+                    format = "df")
+
+draws_sub = 
+  fit_sub$draws(variables =
+                  c("p_control_sub0",
+                    "p_control_sub1",  
+                    "p_treatment_sub0",
+                    "p_treatment_sub1",
+                    "RR_sub0",
+                    "RR_sub1",         
+                    "OR_sub0",         
+                    "OR_sub1",         
+                    "RD_sub0",         
+                    "RD_sub1"),
+                  format = "df")
+```
+
+
+```{r}
+# Posterior Samples ----
+
+## Overall ----
+
+OR_overall_samples <- draws$OR
+
+overall_hdi <- ggdist::median_hdi(OR_overall_samples)
+
+overall_summary = 
+  list(
+    mu_mean = overall_hdi$y,
+    mu_lower = overall_hdi$ymin,
+    mu_upper = overall_hdi$ymax
+  )
+
+## Subgroups ----
+
+samples <- tibble(high_dose = draws_sub$OR_sub0,
+                  low_dose = draws_sub$OR_sub1) |> 
+  pivot_longer(cols = c(high_dose, low_dose)) |>
+  group_by(name)
+
+subgroups_hdi <- samples |> ggdist::median_hdi(value)
+
+subgroups_summary = 
+  list(
+    high_dose_median = subgroups_hdi$value[subgroups_hdi$name == "high_dose"],
+    high_dose_lower = subgroups_hdi$.lower[subgroups_hdi$name == "high_dose"],
+    high_dose_upper = subgroups_hdi$.upper[subgroups_hdi$name == "high_dose"],
+    
+    low_dose_median = subgroups_hdi$value[subgroups_hdi$name == "low_dose"],
+    low_dose_lower = subgroups_hdi$.lower[subgroups_hdi$name == "low_dose"],
+    low_dose_upper = subgroups_hdi$.upper[subgroups_hdi$name == "low_dose"]
+  )
+
+## Altogether ----
+
+overall_text = paste0(overall_hdi$y |> round(2),
+                      " [",
+                      overall_hdi$ymin |> round(2),
+                      ", ",
+                      overall_hdi$ymax |> round(2),
+                      "]")
+
+high_text = paste0(subgroups_summary$high_dose_median |> round(2),
+                   " [",
+                   subgroups_summary$high_dose_lower |> round(2),
+                   ", ",
+                   subgroups_summary$high_dose_upper |> round(2),
+                   "]")
+
+low_text = paste0(subgroups_summary$low_dose_median |> round(2),
+                  " [",
+                  subgroups_summary$low_dose_lower |> round(2),
+                  ", ",
+                  subgroups_summary$low_dose_upper |> round(2),
+                  "]")
+
+samples_OR = tibble(
+  `Overall` = draws$OR,
+  `High Dose\nSubgroup` = draws_sub$OR_sub0,
+  `Low Dose\nSubgroup` = draws_sub$OR_sub1
+) |> 
+  pivot_longer(Overall:`Low Dose\nSubgroup`)
+
+samples = tibble(
+  `Overall` = draws$RD,
+  `High Dose\nSubgroup` = draws_sub$RD_sub0,
+  `Low Dose\nSubgroup` = draws_sub$RD_sub1
+) |> 
+  pivot_longer(Overall:`Low Dose\nSubgroup`)
+
+# Posterior Probabilities ----
+
+overall_prob1 = 
+  (mean(filter(samples, name == "Overall")$value > 0) * 100) |> round(1)
+
+overall_prob2 = 
+  (mean(filter(samples, name == "Overall")$value > 0.02) * 100) |> round(1)
+
+low_prob1 = 
+  (mean(filter(samples, name == "Low Dose\nSubgroup")$value > 0) * 100) |> round(1)
+
+low_prob2 = 
+  (mean(filter(samples, name == "Low Dose\nSubgroup")$value > 0.02) * 100) |> round(1)
+
+high_prob1 = 
+  (mean(filter(samples, name == "High Dose\nSubgroup")$value > 0) * 100) |> round(1)
+
+high_prob2 = 
+  (mean(filter(samples, name == "High Dose\nSubgroup")$value > 0.02) * 100) |> round(1)
+
+# Plot ----
+
+control_risks =
+  data.frame(
+    overall = draws$p_control,
+    high_dose = draws_sub$p_control_sub0,
+    low_dose = draws_sub$p_control_sub1
+  ) |> 
+  pivot_longer(everything()) |> 
+  group_by(name) |> 
+  median_hdi(value) |> 
+  mutate(text = paste0(round(value*100,1), "% [",
+                       round(.lower*100,1), ", ",
+                       round(.upper*100,1), "%]"))
+
+
+
+overall_risk = control_risks$text[control_risks$name == "overall"]
+high_risk = control_risks$text[control_risks$name == "high_dose"]
+low_risk = control_risks$text[control_risks$name == "low_dose"]
+
+caption = paste0("Estimated Risk in Control Groups:\n\nOverall cohort:  ", overall_risk, "\n",
+                 "Low Dose Subgroup: ", low_risk, "\n",
+                 "High Dose Subgroup: ", high_risk, "\n")
+
+# colors
+cols = met.brewer(name="VanGogh1", n=7, type="discrete")
+
+# Plot!
+samples_OR |> 
+  ggplot() +
+  aes(x = value, y = name, fill = name,) +
+  stat_halfeye(.width = 0.95,
+               point_interval = median_hdi) +
+  scale_fill_manual(values = rev(c(cols[2], cols[5], cols[7]))) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall", "Low Dose\nSubgroup", "High Dose\nSubgroup"),
+      label = c(overall_text, low_text, high_text),  
+      x = 5.2
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.2  # Slight vertical nudge to align with distributions
+  ) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall"),
+      label = "Probability of Harm (%)",  
+      x = 8.5
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.9  # Slight vertical nudge to align with distributions
+  ) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall"),
+      label = "RD > 0%",  
+      x = 8.5
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.6  # Slight vertical nudge to align with distributions
+  ) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall"),
+      label = "RD > 2%",  # Replace with your desired text
+      x = 10.5
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.6  # Slight vertical nudge to align with distributions
+  ) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall", "Low Dose\nSubgroup", "High Dose\nSubgroup"),
+      label = c(overall_prob1, low_prob1, high_prob1),  # Replace with your desired text
+      x = 8.8
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.15  # Slight vertical nudge to align with distributions
+  ) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall", "Low Dose\nSubgroup", "High Dose\nSubgroup"),
+      label = c(overall_prob2, low_prob2, high_prob2),  # Replace with your desired text
+      x = 10.8
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.15  # Slight vertical nudge to align with distributions
+  ) +
+  
+  labs(x = "Odds Ratio",
+       y = " ",
+       caption = caption) +
+  scale_x_continuous(
+    breaks = seq(1, 5, 1)
+  ) +
+  coord_cartesian(x = c(0.6, 12)) +
+  theme(
+    legend.position = "none",
+    plot.title.position = 'plot',
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 12),
+    panel.background = element_blank(),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.3)
+  )
+
+
+
+```
+
+```{r}
+           
+```
+

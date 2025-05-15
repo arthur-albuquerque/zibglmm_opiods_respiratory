@@ -1,0 +1,403 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{r}
+pacman::p_load(MetaStan, cmdstanr, dplyr, tidyr, rio, here, data.table,
+               posterior, ggdist, ggplot2, bayesplot)
+
+# Set Stan options
+options(mc.cores = parallel::detectCores())
+color_scheme_set("red")
+```
+
+# Data
+
+
+```{r}
+dat = import(here("data/raw_data.xlsx"))
+
+setnames(dat, old=c("Int_Events","Control_Events"), new=c("r2", "r1"))
+setnames(dat, old=c("Int_Total","Control_Total"), new=c("n2", "n1"))
+
+J <- nrow(dat)  # Number of studies (84)
+y <- as.matrix(dat[, c("r1", "r2")])  # Events: control (r1), treatment (r2)
+sample <- as.matrix(dat[, c("n1", "n2")])  # Sample sizes: control (n1), treatment (n2)
+zero <- c(0, 0)  # Zero vector for random effects mean
+
+# Create the Stan data list
+stan_data <- list(
+  J = J,
+  zero = zero,
+  y = y,
+  sample = sample
+)
+```
+
+# Model
+
+```{r}
+# Compile the Stan model
+zibglmm1 <- cmdstan_model(here("models/stan/zibglmm_model1.stan"))
+```
+
+```{r}
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_model1.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit1 from CSV files
+  fit1 <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # fit1 the model if no CSV files are found
+  fit1 <- zibglmm1$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    adapt_delta = 0.99,  
+    max_treedepth = 15,  
+    seed = 123,
+    refresh = 0
+)
+  
+  # Save CSV files to persistent directory
+  fit1$save_output_files(dir = "models/storage")
+}
+
+
+```
+
+# Diagnostics
+
+```{r}
+draws_diagnostics <- fit1$draws(variables = c("mu", "sigma_nu", "pi"))
+
+summary_df <- fit1$summary(variables = c("mu", "sigma_nu", "pi"))
+
+print(summary_df[, c("variable", "ess_bulk", "ess_tail", "rhat")])
+
+```
+
+```{r}
+fit1$diagnostic_summary()
+```
+
+Check for convergence and mixing of chains
+
+```{r}
+mcmc_trace(draws_diagnostics, pars = c("mu[1]", "mu[2]", "sigma_nu[1]", "sigma_nu[2]", "pi")) +
+  ggtitle("Trace Plots for Key Parameters")
+```
+
+
+Check autocorrelation for key parameters
+
+```{r}
+mcmc_acf(draws_diagnostics, pars = c("mu[1]", "mu[2]", "sigma_nu[1]",
+                                     "sigma_nu[2]", "pi"), lags = 10) +
+  ggtitle("Autocorrelation")
+```
+
+# Posterior Predictive Check
+
+A posterior predictive check (PPC) is a Bayesian method used to assess how well
+a statistical model fit1s the observed data by comparing it to data simulated from
+the model. It involves generating replicated datasets ($y_{\text{rep}}$) from the
+posterior predictive distribution, which combines the fit1ted model parameters
+with new random noise. Test statistics (e.g., means, variances, or proportions)
+are computed for both the observed data ($y_{\text{obs}}$) and the replicated
+data. By comparing these statistics—through visualizations (e.g., histograms)
+or numerical summaries (e.g., posterior p-values)—PPCs evaluate whether the model
+can reproduce key features of the data. If the observed statistics align with the
+replicated ones, the model is considered a good fit1; significant discrepancies
+suggest model misspecification.
+
+Posterior predictive p-values (also called Bayesian p-values) are a useful way to
+quantify the fit1 of your model in a posterior predictive check (PPC). They measure
+the probability that a test statistic computed from the replicated data (y_rep)
+is more extreme than the same test statistic computed from the observed data (y_obs).
+A Bayesian p-value close to 0 or 1 indicates a poor fit1, while a value around 0.5
+suggests the model captures the observed data well for that statistic.
+
+For a test statistic $T(y)$, the posterior predictive p-value is defined as:
+
+  $p = P(T(y_{\text{rep}}) \geq T(y_{\text{obs}}) \mid y_{\text{obs}})$
+  
+where $y_{\text{rep}}$ is the replicated data from the posterior predictive
+distribution, and $y_{\text{obs}}$ is the observed data.
+
+```{r}
+# Extract observed and replicated data
+y_obs <- as.matrix(dat[, c("r1", "r2")])  # Observed data
+y_rep <- fit1$draws("y_rep")  # Posterior predictive samples
+y_rep <- posterior::as_draws_matrix(y_rep)  # Convert to matrix
+```
+
+## 1. Proportion of double zeros
+
+```{r}
+# 1. PPC: Proportion of double zeros
+double_zeros_obs <- sum(y_obs[,1] == 0 & y_obs[,2] == 0) / nrow(y_obs)
+
+double_zeros_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  sum(y_mat[,1] == 0 & y_mat[,2] == 0) / J
+})
+
+double_zeros_rep <- as.matrix(double_zeros_rep)
+
+p_value_double_zeros <- mean(double_zeros_rep >= double_zeros_obs)
+
+ppc_stat(double_zeros_obs, double_zeros_rep, stat = "identity") +
+  ggtitle("PPC: Proportion of Double-Zero Studies") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_double_zeros, 3))) +
+  xlab("Proportion of Double-Zero Studies")
+```
+
+## 2. Mean event rates
+
+```{r}
+mean_rate_control_obs <- mean(y_obs[,1] / dat$n1)
+
+mean_rate_treatment_obs <- mean(y_obs[,2] / dat$n2)
+
+mean_rate_control_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  mean(y_mat[,1] / dat$n1)
+})
+
+mean_rate_treatment_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  mean(y_mat[,2] / dat$n2)
+})
+
+mean_rate_control_rep <- as.matrix(mean_rate_control_rep)
+
+mean_rate_treatment_rep <- as.matrix(mean_rate_treatment_rep)
+
+p_value_mean_rate_control <- mean(mean_rate_control_rep >= mean_rate_control_obs)
+
+p_value_mean_rate_treatment <- mean(mean_rate_treatment_rep >= mean_rate_treatment_obs)
+```
+
+
+```{r}
+ppc_stat(mean_rate_control_obs, mean_rate_control_rep, stat = "identity") +
+  ggtitle("PPC: Mean Event Rate (Control)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_mean_rate_control, 3))) +
+  xlab("Mean Event Rate (Control)")
+```
+
+
+```{r}
+ppc_stat(mean_rate_treatment_obs, mean_rate_treatment_rep, stat = "identity") +
+  ggtitle("PPC: Mean Event Rate (Treatment)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_mean_rate_treatment, 3))) +
+  xlab("Mean Event Rate (Treatment)")
+```
+
+## 3. Total event counts
+
+```{r}
+total_events_control_obs <- sum(y_obs[,1])
+
+total_events_treatment_obs <- sum(y_obs[,2])
+
+total_events_control_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  sum(y_mat[,1])
+})
+
+total_events_treatment_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  sum(y_mat[,2])
+})
+
+total_events_control_rep <- as.matrix(total_events_control_rep)
+
+total_events_treatment_rep <- as.matrix(total_events_treatment_rep)
+
+p_value_total_control <- mean(total_events_control_rep >= total_events_control_obs)
+
+p_value_total_treatment <- mean(total_events_treatment_rep >= total_events_treatment_obs)
+```
+
+
+```{r}
+ppc_stat(total_events_control_obs, total_events_control_rep, stat = "identity") +
+  ggtitle("PPC: Total Events (Control)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_total_control, 3))) +
+  xlab("Total Events in Control Group")
+```
+
+
+```{r}
+ppc_stat(total_events_treatment_obs, total_events_treatment_rep, stat = "identity") +
+  ggtitle("PPC: Total Events (Treatment)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_total_treatment, 3))) +
+  xlab("Total Events in Treatment Group")
+```
+
+## 4. Proportion of zero events per arm
+
+```{r}
+prop_zeros_control_obs <- mean(y_obs[,1] == 0)
+
+prop_zeros_treatment_obs <- mean(y_obs[,2] == 0)
+
+prop_zeros_control_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  mean(y_mat[,1] == 0)
+})
+
+prop_zeros_treatment_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  mean(y_mat[,2] == 0)
+})
+
+prop_zeros_control_rep <- as.matrix(prop_zeros_control_rep)
+
+prop_zeros_treatment_rep <- as.matrix(prop_zeros_treatment_rep)
+
+p_value_prop_zeros_control <- mean(prop_zeros_control_rep >= prop_zeros_control_obs)
+
+p_value_prop_zeros_treatment <- mean(prop_zeros_treatment_rep >= prop_zeros_treatment_obs)
+```
+
+
+```{r}
+ppc_stat(prop_zeros_control_obs, prop_zeros_control_rep, stat = "identity") +
+  ggtitle("PPC: Proportion of Zero Events (Control)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_prop_zeros_control, 3))) +
+  xlab("Proportion of Zero Events in Control Group")
+```
+
+
+```{r}
+ppc_stat(prop_zeros_treatment_obs, prop_zeros_treatment_rep, stat = "identity") +
+  ggtitle("PPC: Proportion of Zero Events (Treatment)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_prop_zeros_treatment, 3))) +
+  xlab("Proportion of Zero Events in Treatment Group")
+```
+
+## 5. Variance of event rates
+
+```{r}
+var_rate_control_obs <- var(y_obs[,1] / dat$n1)
+
+var_rate_treatment_obs <- var(y_obs[,2] / dat$n2)
+
+var_rate_control_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  var(y_mat[,1] / dat$n1)
+})
+
+var_rate_treatment_rep <- apply(y_rep, 1, function(y) {
+  y_mat <- matrix(y, nrow = J, ncol = 2)
+  var(y_mat[,2] / dat$n2)
+})
+
+var_rate_control_rep <- as.matrix(var_rate_control_rep)
+
+var_rate_treatment_rep <- as.matrix(var_rate_treatment_rep)
+
+p_value_var_rate_control <- mean(var_rate_control_rep >= var_rate_control_obs)
+
+p_value_var_rate_treatment <- mean(var_rate_treatment_rep >= var_rate_treatment_obs)
+```
+
+
+```{r}
+ppc_stat(var_rate_control_obs, var_rate_control_rep, stat = "identity") +
+  ggtitle("PPC: Variance of Event Rates (Control)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_var_rate_control, 3))) +
+  xlab("Variance of Event Rates in Control Group")
+```
+
+
+```{r}
+ppc_stat(var_rate_treatment_obs, var_rate_treatment_rep, stat = "identity") +
+  ggtitle("PPC: Variance of Event Rates (Treatment)") +
+  labs(subtitle = paste("Posterior p-value =", round(p_value_var_rate_treatment, 3))) +
+  xlab("Variance of Event Rates in Treatment Group")
+```
+
+## 6. Predicted Study-Specific Control/Treatment Probabiltities
+
+```{r}
+draws1 <- fit1$draws(format = "df")
+
+# Compute study-specific probabilities
+empirical_probabilities = 
+  dat |> reframe(Study = factor(1:nrow(dat)), p1 = r1/n1, p2 = r2/n2)
+
+J <- nrow(dat)  # Number of studies (match your data)
+n_samples <- nrow(draws1)  # Adjust based on number of chains and iterations
+p_control_n <- matrix(NA, n_samples, J)
+p_treatment_n <- matrix(NA, n_samples, J)
+
+# Extract mu and nu from draws (adjust column names based on your model output)
+mu_control <- draws1$`mu[1]`
+mu_treatment <- draws1$`mu[2]`
+
+for (j in 1:J) {
+  nu_control_j <- draws1[[paste0("nu[", j, ",1]")]]
+  nu_treatment_j <- draws1[[paste0("nu[", j, ",2]")]]
+  
+  p_control_n[, j] <- plogis(mu_control + nu_control_j)
+  p_treatment_n[, j] <- plogis(mu_treatment + nu_treatment_j)
+}
+
+control_long <- data.frame(
+  Probability = as.vector(p_control_n),
+  Study = factor(rep(1:J, each = nrow(p_control_n))),
+  Group = "Control"
+)
+
+treatment_long <- data.frame(
+  Probability = as.vector(p_treatment_n),
+  Study = factor(rep(1:J, each = nrow(p_treatment_n))),
+  Group = "Treatment"
+)
+
+```
+
+
+
+```{r}
+ggplot(control_long, aes(x = Probability, y = Study)) +
+  geom_bin2d(binwidth = c(0.02, 1)) +
+  scale_fill_gradient(low = "white", high = "blue") +
+  
+  geom_point(data = empirical_probabilities,
+             aes(x = p1, y = Study), color = "red") +
+  labs(title = "Heatmap of Study-Specific Control Probabilities",
+       x = "Study-Specific Probability",
+       y = "Study",
+       fill = "Density") +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+```
+
+```{r}
+ggplot(treatment_long, aes(x = Probability, y = Study)) +
+  geom_bin2d(binwidth = c(0.02, 1)) +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_point(data = empirical_probabilities,
+             aes(x = p2, y = Study), color = "red") +
+  labs(title = "Heatmap of Study-Specific Treatment Probabilities",
+       x = "Study-Specific Probability",
+       y = "Study",
+       fill = "Density") +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+```
+
+
+
+

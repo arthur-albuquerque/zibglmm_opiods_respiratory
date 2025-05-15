@@ -1,0 +1,312 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{r}
+# Load/install required packages
+pacman::p_load(cmdstanr,
+               tidyverse,
+               bayesplot,
+               posterior,
+               rio,
+               data.table,
+               here,
+               ggdist)
+```
+
+# Overview
+
+This document explains a Bayesian hierarchical meta-analysis model implemented
+in Stan for analyzing binomial data from multiple studies, accounting for studies
+with no events (zero inflation). 
+The model estimates fixed effects for treatment and control groups, incorporates
+study-specific random effects, and models excess zeros using a zero-inflation 
+component. 
+
+This model takes into account the population heterogeneity. Specifically, we assume
+that the event probability in a certain study subpopulation, referred to as a
+“healthy population”, is extremely low, approximately equal to zero. In contrast,
+we assume the other subpopulation, referred to as a “sicker population”, has a
+relatively high event probability. We denote **pi** as the proportion of studies
+with healthy populations representing individuals who have approximately zero
+risk for the event of interest.
+
+# Data Structure
+
+The model uses the following data inputs:
+
+- **J**: Number of studies (positive integer).
+
+- **y[J,2]**: Matrix of observed successes, where `y[n,1]` is the number of 
+successes in the treatment group for study `n`, and `y[n,2]` is for the control
+group.
+
+- **sample[J,2]**: Matrix of sample sizes, where `sample[n,1]` is the sample size
+for the treatment group in study `n`, and `sample[n,2]` is for the control group.
+
+- **zero**: A vector of zeros `[0,0]` used as the mean for the random effects
+distribution.
+
+# Model Parameters
+
+The model includes the following parameters:
+
+- **mu[1]** and **mu[2]**: Fixed effects for the log-odds of success in the 
+control (`mu[1]`) and treatment (`mu[2]`) groups.
+
+- **sigma_nu[1]** and **sigma_nu[2]**: Standard deviations for the random effects
+of control and treatment groups.
+
+- **omega_nu**: A 2x2 correlation matrix for the random effects, capturing
+correlations between treatment and control random effects.
+
+- **nu[J,2]**: Study-specific random effects for control (`nu[n,1]`) and
+treatment (`nu[n,2]`) groups for each study `n`.
+
+- **pi**: The proportion of studies with healthy populations representing
+individuals who have approximately zero risk for the event of interest.
+
+- beta[1] and beta[2]: Coefficients for the subgroup effect on the log-odds of success in the control (beta[1]) and treatment (beta[2]) groups, adjusting the baseline fixed effects for studies where subgroup = 1. The adjusted fixed effect for study n is mu_base[i] + beta[i] * subgroup[n] for i = 1 (control) or i = 2 (treatment).
+
+## Priors
+
+The priors are specified as follows:
+
+- Random effects: ($\nu_n \sim \text{MultiNormal}(0, \Sigma_\nu)$), where
+$\Sigma_\nu = \text{diag}(\sigma_\nu) \Omega_\nu \text{diag}(\sigma_\nu)$.
+- Standard deviations: ($\sigma_\nu \sim \text{Half-Normal}(0.5)$).
+- Correlation matrix: ($\Omega_\nu \sim \text{LKJ}(2.0)$).
+- Fixed effects: ($\mu \sim \text{Normal}(0, 2)$).
+- Zero-inflation probability: $\pi \sim \text{Beta}(1, 1)$.
+
+# Data
+
+```{r}
+dat = import(here("data/raw_data.xlsx"))
+
+setnames(dat, old=c("Int_Events","Control_Events"), new=c("r2", "r1"))
+setnames(dat, old=c("Int_Total","Control_Total"), new=c("n2", "n1"))
+
+
+# Prepare data for Stan (only J, zero, and sample are needed)
+J <- nrow(dat)  # Number of studies (84)
+zero <- c(0, 0)  # Zero vector for random effects mean
+sample <- as.matrix(dat[, c("n1", "n2")])  # Sample sizes: control (n1), treatment (n2)
+subgroup <- dat[, "Low_Dose"]
+
+# Create the Stan data list
+stan_data <- list(
+  J = J,
+  zero = zero,
+  sample = sample,
+  subgroup = subgroup
+)
+```
+
+# Model
+
+```{r}
+# Write and compile the model
+model1 <- cmdstan_model(here("models/stan/zibglmm_subgroups_prior_model1.stan"))
+```
+
+
+```{r}
+csv_files <- list.files(here("models/storage"),
+                        pattern = "^zibglmm_subgroups_prior_model1.*\\.csv$",
+                        full.names = TRUE)
+
+if (length(csv_files) > 0 && all(file.exists(csv_files))) {
+  # Load the fit from CSV files
+  fit_prior_mod <- cmdstanr::as_cmdstan_fit(csv_files)
+  
+} else {
+  # Fit the model if no CSV files are found
+  fit_prior_mod <- model1$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 2000,  
+    adapt_delta = 0.99,
+    seed = 123,
+    refresh = 0
+  )
+  
+  # Save CSV files to persistent directory
+  fit_prior_mod$save_output_files(dir = "models/storage")
+}
+
+
+```
+
+# Prior Predictive Checking
+
+## Parameters
+
+
+```{r}
+prior_draws_parameters_mod <- 
+  fit_prior_mod$draws(variables = c("mu", "pi", "sigma_nu", "beta"),
+                           format = "df")
+
+# Transform mu[1] and mu[2] using plogis()
+mu1_prob <- plogis(prior_draws_parameters_mod$`mu[1]`)
+mu2_prob <- plogis(prior_draws_parameters_mod$`mu[2]`)
+
+# Combine transformed mu draws with pi into a new matrix
+transformed_draws_mod <- matrix(c(mu1_prob,
+                              mu2_prob,
+                              prior_draws_parameters_mod$pi,
+                              prior_draws_parameters_mod$`sigma_nu[1]`,
+                              prior_draws_parameters_mod$`sigma_nu[2]`,
+                              prior_draws_parameters_mod$`beta[1]`,
+                              prior_draws_parameters_mod$`beta[2]`), 
+                            ncol = 7, 
+                            dimnames = list(NULL, c("plogis(mu[1])",
+                                                    "plogis(mu[2])",
+                                                    "pi",
+                                                    "sigma_nu[1]",
+                                                    "sigma_nu[2]",
+                                                    "beta[1]",
+                                                    "beta[2]")))
+
+# Density plot for transformed mu and pi
+mcmc_dens(transformed_draws_mod,
+          pars = c("plogis(mu[1])",
+                   "plogis(mu[2])",
+                   "pi",
+                   "sigma_nu[1]",
+                   "sigma_nu[2]",
+                   "beta[1]",
+                   "beta[2]")
+          ) +
+  ggtitle("Priors: Parameters") +
+  theme_minimal()
+```
+
+## Estimands
+
+```{r}
+# Extract prior predictive draws
+prior_draws_estimands <- 
+  fit_prior_mod$draws(variables =
+                        c("p_control_sub0",
+                          "p_control_sub1",  
+                          "p_treatment_sub0",
+                          "p_treatment_sub1",
+                          "RR_sub0",
+                          "RR_sub1",         
+                          "OR_sub0",         
+                          "OR_sub1",         
+                          "RD_sub0",         
+                          "RD_sub1"),
+                  format = "df")
+```
+
+
+
+```{r}
+# 2. Density Plots for Estimands
+mcmc_dens(prior_draws_estimands,
+          pars = c("p_control_sub0",
+                   "p_control_sub1",  
+                   "p_treatment_sub0",
+                   "p_treatment_sub1",
+                   "RR_sub0",
+                   "RR_sub1",         
+                   "OR_sub0",         
+                   "OR_sub1",         
+                   "RD_sub0",         
+                   "RD_sub1")
+            ) +
+  ggtitle("Prior Predictive Density Plots for Estimands") +
+  theme_minimal()
+```
+
+## Predictive Analysis
+
+
+For the prior predictive checks, we recommend aiming for a prior data-generating
+process that can produce plausible data sets, not necessarily data sets that are
+indistinguishable from observed data.
+
+
+```{r}
+
+# Extract draws from the prior predictive fit
+draws <- fit_prior_mod$draws(format = "df")
+
+# Determine the number of samples and studies
+n_samples <- nrow(draws)  # Total draws after warmup
+J <- nrow(dat)  # Number of studies (adjust based on your data)
+
+# Extract mu_base, beta, and nu from draws
+mu_control <- draws$`mu[1]`
+mu_treatment <- draws$`mu[2]`
+beta_control <- draws$`beta[1]`
+beta_treatment <- draws$`beta[2]`
+
+# Extract the subgroup covariate (ensure this matches your data)
+subgroup <- dat$Low_Dose  # Binary vector (0 or 1) for each study
+
+# Initialize matrices for study-specific probabilities
+p_control_n <- matrix(NA, nrow = n_samples, ncol = J)
+p_treatment_n <- matrix(NA, nrow = n_samples, ncol = J)
+
+# Compute study-specific probabilities, adjusted for subgroup
+for (j in 1:J) {
+  nu_control_j <- draws[[paste0("nu[", j, ",1]")]]
+  nu_treatment_j <- draws[[paste0("nu[", j, ",2]")]]
+  
+  # Adjust fixed effects for subgroup
+  p_control_n[, j] <- plogis(mu_control + beta_control * subgroup[j] + nu_control_j)
+  p_treatment_n[, j] <- plogis(mu_treatment + beta_treatment * subgroup[j] + nu_treatment_j)
+}
+
+# Reshape data into long format, including subgroup information
+control_long <- data.frame(
+  Probability = as.vector(p_control_n),
+  Study = factor(rep(1:J, each = n_samples)),
+  Group = "Control",
+  Subgroup = factor(rep(subgroup, each = n_samples), levels = c(0, 1), labels = c("Subgroup 0", "Subgroup 1"))
+)
+
+treatment_long <- data.frame(
+  Probability = as.vector(p_treatment_n),
+  Study = factor(rep(1:J, each = n_samples)),
+  Group = "Treatment",
+  Subgroup = factor(rep(subgroup, each = n_samples), levels = c(0, 1), labels = c("Subgroup 0", "Subgroup 1"))
+)
+
+```
+
+
+
+
+```{r}
+ggplot(control_long, aes(x = Probability, group = Study)) +
+  geom_density(alpha = 0.01, linewidth = 0.03) +
+  labs(title = "Density of Study-Specific Control Probabilities",
+       x = "Study-Specific Probability",
+       y = "Density") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, NA)) +  # Ensure y-axis starts at 0
+  facet_wrap(~Subgroup, ncol = 2) +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+```
+
+
+```{r}
+ggplot(treatment_long, aes(x = Probability, group = Study)) +
+  geom_density(alpha = 0.01, linewidth = 0.03) +
+  labs(title = "Heatmap of Study-Specific Treatment Probabilities",
+       x = "Study-Specific Probability",
+       y = "Study",
+       fill = "Density") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, NA)) +  # Ensure y-axis starts at 0
+  facet_wrap(~Subgroup, ncol = 2) +
+  theme(strip.text = element_text(size = 12, face = "bold"))
+```
