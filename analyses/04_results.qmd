@@ -1,6 +1,8 @@
 ---
-title: "Untitled"
-format: html
+title: "Results"
+format:
+  html:
+    embed-resources: true
 editor_options: 
   chunk_output_type: inline
 ---
@@ -327,7 +329,7 @@ samples_OR |>
     data = data.frame(
       name = c("Overall", "Low Dose\nSubgroup", "High Dose\nSubgroup"),
       label = c(overall_prob2, low_prob2, high_prob2),  # Replace with your desired text
-      x = 10.8
+      x = 11
     ),
     aes(x = x, y = name, label = label),
     hjust = 0,  # Align text to the left (so it extends rightward)
@@ -358,7 +360,4 @@ samples_OR |>
 
 ```
 
-```{r}
-           
-```
 

@@ -1,6 +1,8 @@
 ---
-title: "Untitled"
-format: html
+title: "Prior Predictive Exploration - Main model"
+format:
+  html:
+    embed-resources: true
 ---
 
 ```{r}
@@ -260,7 +262,7 @@ ggplot(treatment_long, aes(x = Probability, y = Study)) +
   scale_fill_gradient(low = "white", high = "blue") +
   facet_wrap(~Group, ncol = 2, scales = "free_y") +
   labs(title = "Heatmap of Study-Specific Treatment Probabilities",
-       x = "Study-Specific Probability",
+       x = "Probability",
        y = "Study",
        fill = "Density") +
   theme_minimal() +
@@ -271,12 +273,12 @@ ggplot(treatment_long, aes(x = Probability, y = Study)) +
 rbind(control_long, treatment_long) |> 
   ggplot(aes(x = Probability, group = Study)) +
   geom_density(alpha = 0.01, linewidth = 0.03) +
-  labs(title = "Heatmap of Study-Specific Treatment Probabilities",
-       x = "Study-Specific Probability",
-       y = "Study",
+  labs(title = "Density of Study-Specific Treatment Probabilities",
+       x = "Probability",
+       y = "Density",
        fill = "Density") +
   theme_minimal() +
-  scale_y_continuous(limits = c(0, NA)) +  # Ensure y-axis starts at 0
+  scale_y_continuous(limits = c(0, NA)) +  
   facet_wrap(~Group, ncol = 2) +
   theme(strip.text = element_text(size = 12, face = "bold"))
 ```

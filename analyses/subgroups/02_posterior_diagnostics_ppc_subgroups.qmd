@@ -1,6 +1,8 @@
 ---
-title: "Untitled"
-format: html
+title: "Model Diagnostics and Posterior Predictive Check: Subgroups Model"
+format:
+  html:
+    embed-resources: true
 ---
 
 ```{r}
@@ -585,8 +587,7 @@ ggplot(control_long, aes(x = Probability, group = Study)) +
   facet_grid(Group ~ Subgroup, scales = "free_y") +
   labs(title = "Density of Predicted Study-Specific Control Probabilities",
        x = "Study-Specific Probability",
-       y = "Study",
-       fill = "Density") +
+       y = "Density") +
   theme_minimal() 
 ```
 
@@ -594,13 +595,14 @@ ggplot(control_long, aes(x = Probability, group = Study)) +
 ggplot(treatment_long, aes(x = Probability, group = Study)) +
   geom_density(alpha = 0.01, linewidth = 0.03) +
   facet_grid(Group ~ Subgroup, scales = "free_y") +
-  labs(title = "Heatmap of Predicted Study-Specific Treatment Probabilities",
-       x = "Study-Specific Probability",
-       y = "Study",
-       fill = "Density") +
+  labs(title = "Density of Predicted Study-Specific Treatment Probabilities",
+       x = "Probability",
+       y = "Density") +
   theme_minimal() 
 ```
 
+This plots shows the predicted probability density for each study as heatmaps.
+Each row represents a study in our sample. Red points depict the observed study-specific probability.
 
 ```{r}
 # Heatmap with empirical probabilities and subgroup faceting
@@ -610,7 +612,7 @@ ggplot(control_long, aes(x = Probability, y = Study)) +
   geom_point(data = empirical_probabilities, aes(x = p1, y = Study), color = "red") +
   facet_grid(Group ~ Subgroup, scales = "free_y") +
   labs(title = "Heatmap of Predicted Study-Specific Control Probabilities",
-       x = "Study-Specific Probability",
+       x = "Probability",
        y = "Study",
        fill = "Density") +
   theme_minimal() +
@@ -625,7 +627,7 @@ ggplot(treatment_long, aes(x = Probability, y = Study)) +
   geom_point(data = empirical_probabilities, aes(x = p2, y = Study), color = "red") +
   facet_grid(Group ~ Subgroup, scales = "free_y") +
   labs(title = "Heatmap of Predicted Study-Specific Treatment Probabilities",
-       x = "Study-Specific Probability",
+       x = "Probability",
        y = "Study",
        fill = "Density") +
   theme_minimal() +

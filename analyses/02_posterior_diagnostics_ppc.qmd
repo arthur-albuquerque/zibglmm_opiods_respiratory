@@ -1,6 +1,8 @@
 ---
-title: "Untitled"
-format: html
+title: "Model Diagnostics and Posterior Predictive Check: Main Model"
+format:
+  html:
+    embed-resources: true
 ---
 
 ```{r}
@@ -106,9 +108,9 @@ mcmc_acf(draws_diagnostics, pars = c("mu[1]", "mu[2]", "sigma_nu[1]",
 # Posterior Predictive Check
 
 A posterior predictive check (PPC) is a Bayesian method used to assess how well
-a statistical model fit1s the observed data by comparing it to data simulated from
+a statistical model fits the observed data by comparing it to data simulated from
 the model. It involves generating replicated datasets ($y_{\text{rep}}$) from the
-posterior predictive distribution, which combines the fit1ted model parameters
+posterior predictive distribution, which combines the fitted model parameters
 with new random noise. Test statistics (e.g., means, variances, or proportions)
 are computed for both the observed data ($y_{\text{obs}}$) and the replicated
 data. By comparing these statistics—through visualizations (e.g., histograms)
@@ -118,18 +120,16 @@ replicated ones, the model is considered a good fit1; significant discrepancies
 suggest model misspecification.
 
 Posterior predictive p-values (also called Bayesian p-values) are a useful way to
-quantify the fit1 of your model in a posterior predictive check (PPC). They measure
-the probability that a test statistic computed from the replicated data (y_rep)
-is more extreme than the same test statistic computed from the observed data (y_obs).
-A Bayesian p-value close to 0 or 1 indicates a poor fit1, while a value around 0.5
+quantify the fit of your model in a posterior predictive check (PPC). They measure
+the probability that a test statistic computed from the replicated data ($y_{\text{rep}}$)
+is more extreme than the same test statistic computed from the observed data ($y_{\text{obs}}$).
+A Bayesian p-value close to 0 or 1 indicates a poor fit, while a value around 0.5
 suggests the model captures the observed data well for that statistic.
 
 For a test statistic $T(y)$, the posterior predictive p-value is defined as:
 
   $p = P(T(y_{\text{rep}}) \geq T(y_{\text{obs}}) \mid y_{\text{obs}})$
-  
-where $y_{\text{rep}}$ is the replicated data from the posterior predictive
-distribution, and $y_{\text{obs}}$ is the observed data.
+
 
 ```{r}
 # Extract observed and replicated data
@@ -361,6 +361,10 @@ ppc_stat(corr_obs, corr_rep, stat = "identity") +
 
 ## 7. Predicted Study-Specific Control/Treatment Probabiltities
 
+This plots shows the predicted probability density for each study as heatmaps.
+Each row represents a study in our sample. Red points depict the observed study-specific probability.
+
+
 ```{r}
 draws1 <- fit1$draws(format = "df")
 
@@ -409,7 +413,7 @@ ggplot(control_long, aes(x = Probability, y = Study)) +
   geom_point(data = empirical_probabilities,
              aes(x = p1, y = Study), color = "red") +
   labs(title = "Heatmap of Study-Specific Control Probabilities",
-       x = "Study-Specific Probability",
+       x = "Probability",
        y = "Study",
        fill = "Density") +
   theme_minimal() +
@@ -423,7 +427,7 @@ ggplot(treatment_long, aes(x = Probability, y = Study)) +
   geom_point(data = empirical_probabilities,
              aes(x = p2, y = Study), color = "red") +
   labs(title = "Heatmap of Study-Specific Treatment Probabilities",
-       x = "Study-Specific Probability",
+       x = "Probability",
        y = "Study",
        fill = "Density") +
   theme_minimal() +

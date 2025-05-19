@@ -1,6 +1,8 @@
 ---
-title: "Untitled"
-format: html
+title: "Prior Predictive Exploration - Subgroups model"
+format:
+  html:
+    embed-resources: true
 ---
 
 ```{r}
@@ -289,7 +291,7 @@ treatment_long <- data.frame(
 ggplot(control_long, aes(x = Probability, group = Study)) +
   geom_density(alpha = 0.01, linewidth = 0.03) +
   labs(title = "Density of Study-Specific Control Probabilities",
-       x = "Study-Specific Probability",
+       x = "Probability",
        y = "Density") +
   theme_minimal() +
   scale_y_continuous(limits = c(0, NA)) +  # Ensure y-axis starts at 0
@@ -301,8 +303,8 @@ ggplot(control_long, aes(x = Probability, group = Study)) +
 ```{r}
 ggplot(treatment_long, aes(x = Probability, group = Study)) +
   geom_density(alpha = 0.01, linewidth = 0.03) +
-  labs(title = "Heatmap of Study-Specific Treatment Probabilities",
-       x = "Study-Specific Probability",
+  labs(title = "Density of Study-Specific Treatment Probabilities",
+       x = "Probability",
        y = "Study",
        fill = "Density") +
   theme_minimal() +
