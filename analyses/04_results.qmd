@@ -357,7 +357,101 @@ samples_OR |>
   )
 
 
+# ggsave(width = 7,
+#        height = 5,
+#         here("figures", "figure_01.pdf")) # File name
 
 ```
+
+# Risk Difference
+
+```{r}
+
+overall_RD_hdi <- ggdist::median_hdi(subset(samples, name == "Overall")$value)
+low_RD_hdi <- ggdist::median_hdi(subset(samples, name == "Low Dose\nSubgroup")$value)
+high_RD_hdi <- ggdist::median_hdi(subset(samples, name == "High Dose\nSubgroup")$value)
+
+RD_summary = 
+  list(
+    overall_median = overall_RD_hdi$y,
+    overall_lower = overall_RD_hdi$ymin,
+    overall_upper = overall_RD_hdi$ymax,
+    
+    low_median = low_RD_hdi$y,
+    low_lower = low_RD_hdi$ymin,
+    low_upper = low_RD_hdi$ymax,
+    
+    high_median = high_RD_hdi$y,
+    high_lower = high_RD_hdi$ymin,
+    high_upper = high_RD_hdi$ymax
+  )
+
+## Subgroups ----
+
+
+overall_text_RD = paste0((RD_summary$overall_median*100) |> round(2),
+                      "% [",
+                      (RD_summary$overall_lower*100) |> round(2),
+                      ", ",
+                      (RD_summary$overall_upper*100) |> round(2),
+                      "]")
+
+high_text_RD = paste0((RD_summary$high_median*100) |> round(2),
+                   "% [",
+                   (RD_summary$high_lower*100) |> round(2),
+                   ", ",
+                   (RD_summary$high_upper*100) |> round(2),
+                   "]")
+
+low_text_RD = paste0((RD_summary$low_median*100) |> round(2),
+                  "% [",
+                  (RD_summary$low_lower*100) |> round(2),
+                  ", ",
+                  (RD_summary$low_upper*100) |> round(2),
+                  "]")
+
+mean(subset(samples, name == "Low Dose\nSubgroup")$value  >0)
+
+samples |> 
+  ggplot() +
+  aes(x = value*100, y = name, fill = name,) +
+  stat_halfeye(.width = 0.95,
+               point_interval = median_hdi) +
+  scale_fill_manual(values = rev(c(cols[2], cols[5], cols[7]))) +
+  
+  geom_text(
+    data = data.frame(
+      name = c("Overall", "Low Dose\nSubgroup", "High Dose\nSubgroup"),
+      label = c(overall_text_RD, low_text_RD, high_text_RD),  
+      x = 11
+    ),
+    aes(x = x, y = name, label = label),
+    hjust = 0,  # Align text to the left (so it extends rightward)
+    size = 4,
+    nudge_y = 0.2  # Slight vertical nudge to align with distributions
+  ) +
+  
+  labs(x = "Risk Difference (%)",
+       y = " ",
+       caption = caption) +
+  scale_x_continuous(
+    breaks = seq(0, 10, 2.5)
+  ) +
+ coord_cartesian(x = c(-1, 15)) +
+  theme(
+    legend.position = "none",
+    plot.title.position = 'plot',
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 12),
+    panel.background = element_blank(),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.3)
+  )
+
+
+```
+
 
 
